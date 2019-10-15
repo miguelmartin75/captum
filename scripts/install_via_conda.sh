@@ -14,7 +14,6 @@ while getopts 'nf' flag; do
   done
 
 # update conda
-# removing due to setuptools error during update
 #conda update -y -n base -c defaults conda
 
 # required to use conda develop
