@@ -128,17 +128,6 @@ def _format_baseline(baselines, inputs):
     return baselines
 
 
-def format_mask(mask):
-    if mask is None:
-        return None
-    if not isinstance(inputs, tuple):
-        assert isinstance(
-            inputs, torch.Tensor
-        ), "`inputs` must have type " "torch.Tensor but {} found: ".format(type(inputs))
-        inputs = (inputs,)
-    return inputs
-
-
 def _format_input_baseline(inputs, baselines):
     inputs = _format_input(inputs)
     baselines = _format_baseline(baselines, inputs)
