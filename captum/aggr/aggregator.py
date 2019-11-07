@@ -1,35 +1,19 @@
 # TODO: convert to iterable to be a cleaner api
 # i.e. to be able to go for stat in stat_graph: ...
 class StatGraph(object):
-    class Node:
-        stat = None
-        invisible = False
-
-        def __init__(self, stat, invisible=False):
-            self.stat = stat
-            self.invisible = invisible
-
-    # stats is a dict
     def __init__(self):
         self.is_ready = False
+        self.module_to_node = dict()
         self.nodes = []
 
-        # module -> node
-        self.module_to_node = dict()
-
-        # class name -> deps
-        self.deps = dict()
-
     # TODO: type annotation
-    def add(self, stat, invisible=False):
-        if stat in self.module_to_node:
-            self.module_to_node[stat].invisible = invisible
+    def add(self, stat):
+        if stat.__class__ in self.module_to_node:
             return self
 
         self.is_ready = False
-        node = StatGraph.Node(stat=stat(), invisible=invisible)
-        self.module_to_node[stat] = node
-        self.nodes.append(node)
+        self.module_to_node[stat.__class__] = stat
+        self.nodes.append(stat)
         return self
 
     def construct(self):
@@ -40,13 +24,12 @@ class StatGraph(object):
         self.is_ready = True
 
     def _resolve_deps(self):
-        for node in self.nodes:
-            self.deps[node] = {}
-            for name, dep in node.stat.deps.items():
-                if dep not in self.module_to_node:
-                    self.add(dep, invisible=True)
-
-                self.deps[node][name] = self.module_to_node[dep]
+        pass
+#        for node in self.nodes:
+#            self.deps[node] = {}
+#            for name, dep in node.stat.deps.items():
+#                assert dep in self.module_to_node
+#                self.deps[node][name] = self.module_to_node[dep.__class__]
 
     def iter_all(self):
         if not self.is_ready:
@@ -58,14 +41,18 @@ class StatGraph(object):
     @property
     def summary(self):
         summ = {}
-        for node in self.iter_all():
-            if node.invisible:
-                continue
+        for stat in self.iter_all():
+            deps = {}
 
-            summ[node.stat.name] = node.stat.get(self.deps[node])
-        return summ
+            for name, module in stat.deps.items():
+                assert module in summ
+                deps[name] = summ[module]
 
-# TODO: 
+            summ[stat.__class__] = stat.get(deps)
+
+        return { self.module_to_node[k].name: v for k, v in summ.items() }
+
+# TODO:
 # should we let update accept a dict to be more generic?
 # or just let the user handle that on the user-side?
 class Aggregator(object):
@@ -83,15 +70,15 @@ class Aggregator(object):
         return self
 
     def update(self, x):
-        for node in self._stat_graph.iter_all():
-            node.stat.update(x)
+        for stat in self._stat_graph.iter_all():
+            stat.update(x)
 
     @property
     def summary(self):
         return self._stat_graph.summary
 
-# TODO: 
-# work out how to supply stats with a custom n? 
-#
-# e.g. 
-# if a stat is aggregating over some f(batch)... how does this work?
+# TODO
+def common_aggr(init_fn=None, min_fn=None, max_fn=None):
+    return None
+    #from captum.aggr.stat import Mean, Var, StdDev, Min, Max
+    #return Aggregator([Mean(init_fn=init_fn), Var(init_fn=init_fn), StdDev(), Count(), Min(), Max()])
