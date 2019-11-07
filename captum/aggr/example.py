@@ -73,6 +73,7 @@ def attrib_iter(n=10):
         _, pred_idx = torch.topk(out, 1)
         pred_idx.squeeze_()
 
+        z = None
         for j in range(x.size(0)):
             input = x[j].unsqueeze(0)
             input.requires_grad = True
@@ -80,12 +81,21 @@ def attrib_iter(n=10):
             attr_ig = ig.attribute(input, target=pred_idx[j], baselines=input * 0)
             attr_ig = np.transpose(attr_ig.squeeze().cpu().detach().numpy(), (1, 2, 0))
 
-            yield attr_ig
+            if z is None:
+                z = np.zeros_like(attr_ig)
+
+            z += attr_ig
+
+        z /= x.size(0)
+
+        yield z
+
 
 from captum.aggr.aggregator import Aggregator
-from captum.aggr.stat import Mean, StdDev
+from captum.aggr.stat import Mean, Var, StdDev, Min, Max
 
-aggr = Aggregator([Mean, StdDev])
+# TODO: discuss constructing here vs. inside class
+aggr = Aggregator([Mean(), Var(), StdDev(), Min(), Max()])
 for attrib in attrib_iter():
     aggr.update(attrib)
 

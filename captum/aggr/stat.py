@@ -1,4 +1,4 @@
-from types import ModuleType
+import numpy as np
 
 class Stat(object):
     def __init__(self, deps=None):
@@ -17,9 +17,10 @@ class Stat(object):
         return 'stat'
 
 class Mean(Stat):
-    def __init__(self):
+    def __init__(self, init_fn=np.zeros_like):
         super().__init__()
         self.cumsum = None
+        self.init_fn = init_fn
         self.n = 0
 
     def get(self, deps):
@@ -28,8 +29,8 @@ class Mean(Stat):
         return self.cumsum / self.n
 
     def update(self, x):
-        if not self.cumsum:
-            self.cumsum = torch.zeros_like(x)
+        if self.cumsum is None:
+            self.cumsum = self.init_fn(x)
 
         self.cumsum += x
         self.n += 1
@@ -41,14 +42,16 @@ class Mean(Stat):
 class Var(Stat):
     def __init__(self):
         super().__init__({'mean': Mean})
+        self.x_squared = 0
+        self.n = 0
 
     def get(self, deps):
         # TODO
-        raise NotImplementedError()
+        return self.n
 
     def update(self, x):
         # TODO
-        raise NotImplementedError()
+        pass
 
     @property
     def name(self):
@@ -59,7 +62,7 @@ class StdDev(Stat):
         super().__init__({'var': Var})
 
     def get(self, deps):
-        return deps['var'].get() ** 0.5
+        return deps['var'] ** 0.5
 
     def update(self, x):
         pass
@@ -67,3 +70,35 @@ class StdDev(Stat):
     @property
     def name(self):
         return 'std_dev'
+
+# TODO: could use this to implement every fn lmao
+class GeneralAccumFn(Stat):
+    def __init__(self, fn=None):
+        super().__init__()
+        self.result = None
+        self.fn = fn
+
+    def get(self, deps):
+        return self.result
+
+    def update(self, x):
+        if self.result is None:
+            self.result = x
+        else:
+            self.result = self.fn(self.result, x)
+
+class Min(GeneralAccumFn):
+    def __init__(self, min_fn=np.minimum):
+        super().__init__(fn=min_fn)
+
+    @property
+    def name(self):
+        return 'min'
+
+class Max(GeneralAccumFn):
+    def __init__(self, max_fn=np.maximum):
+        super().__init__(fn=max_fn)
+
+    @property
+    def name(self):
+        return 'max'
