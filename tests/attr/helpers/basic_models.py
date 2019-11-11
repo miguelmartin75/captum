@@ -113,6 +113,21 @@ class ReLUDeepLiftModel(nn.Module):
         return 2 * self.relu1(x1) + 2 * self.relu2(x2 - 1.5)
 
 
+class TanhDeepLiftModel(nn.Module):
+    r"""
+        Same as the ReLUDeepLiftModel, but with activations
+        that can have negative outputs
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.tanh1 = nn.Tanh()
+        self.tanh2 = nn.Tanh()
+
+    def forward(self, x1, x2):
+        return 2 * self.tanh1(x1) + 2 * self.tanh2(x2 - 1.5)
+
+
 class ReLULinearDeepLiftModel(nn.Module):
     r"""
         Simple architecture similar to:
@@ -180,8 +195,8 @@ class BasicEmbeddingModel(nn.Module):
         return self.linear2(self.relu(self.linear1(embeddings))).squeeze(1)
 
 
-class TestModel_MultiLayer(nn.Module):
-    def __init__(self):
+class BasicModel_MultiLayer(nn.Module):
+    def __init__(self, inplace=False):
         super().__init__()
         # Linear 0 is simply identity transform
         self.linear0 = nn.Linear(3, 3)
@@ -190,34 +205,38 @@ class TestModel_MultiLayer(nn.Module):
         self.linear1 = nn.Linear(3, 4)
         self.linear1.weight = nn.Parameter(torch.ones(4, 3))
         self.linear1.bias = nn.Parameter(torch.tensor([-10.0, 1.0, 1.0, 1.0]))
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(inplace=inplace)
         self.linear2 = nn.Linear(4, 2)
         self.linear2.weight = nn.Parameter(torch.ones(2, 4))
         self.linear2.bias = nn.Parameter(torch.tensor([-1.0, 1.0]))
 
-    def forward(self, x, add_input=None):
+    def forward(self, x, add_input=None, multidim_output=False):
         input = x if add_input is None else x + add_input
         lin0_out = self.linear0(input)
         lin1_out = self.linear1(lin0_out)
         relu_out = self.relu(lin1_out)
         lin2_out = self.linear2(relu_out)
-        return lin2_out
+        if multidim_output:
+            stack_mid = torch.stack((lin2_out, 2 * lin2_out), dim=2)
+            return torch.stack((stack_mid, 4 * stack_mid), dim=3)
+        else:
+            return lin2_out
 
 
-class TestModel_MultiLayer_MultiInput(nn.Module):
+class BasicModel_MultiLayer_MultiInput(nn.Module):
     def __init__(self):
         super().__init__()
-        self.model = TestModel_MultiLayer()
+        self.model = BasicModel_MultiLayer()
 
     def forward(self, x1, x2, x3, scale):
         return self.model(scale * (x1 + x2 + x3))
 
 
 class BasicModel_ConvNet_One_Conv(nn.Module):
-    def __init__(self):
+    def __init__(self, inplace=False):
         super().__init__()
         self.conv1 = nn.Conv2d(1, 2, 3, 1)
-        self.relu1 = nn.ReLU()
+        self.relu1 = nn.ReLU(inplace=inplace)
         self.softmax = nn.Softmax(dim=1)
         self.fc1 = nn.Linear(8, 4)
         self.conv1.weight = nn.Parameter(torch.ones(2, 1, 3, 3))
@@ -225,7 +244,7 @@ class BasicModel_ConvNet_One_Conv(nn.Module):
         self.fc1.weight = nn.Parameter(
             torch.cat([torch.ones(4, 5), -1 * torch.ones(4, 3)], dim=1)
         )
-        self.relu2 = nn.ReLU()
+        self.relu2 = nn.ReLU(inplace=inplace)
 
     def forward(self, x, x2=None):
         if x2 is not None:
@@ -235,7 +254,7 @@ class BasicModel_ConvNet_One_Conv(nn.Module):
         return self.relu2(self.fc1(x))
 
 
-class TestModel_ConvNet(nn.Module):
+class BasicModel_ConvNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Conv2d(1, 2, 3, 1)
@@ -263,7 +282,7 @@ class TestModel_ConvNet(nn.Module):
         return self.softmax(x)
 
 
-class TestModel_ConvNet_MaxPool1d(nn.Module):
+class BasicModel_ConvNet_MaxPool1d(nn.Module):
     """Same as above, but with the MaxPool2d replaced
     with a MaxPool1d. This is useful because the MaxPool modules
     behave differently to other modules from the perspective
@@ -297,7 +316,7 @@ class TestModel_ConvNet_MaxPool1d(nn.Module):
         return self.softmax(x)
 
 
-class TestModel_ConvNet_MaxPool3d(nn.Module):
+class BasicModel_ConvNet_MaxPool3d(nn.Module):
     """Same as above, but with the MaxPool1d replaced
     with a MaxPool3d. This is useful because the MaxPool modules
     behave differently to other modules from the perspective
