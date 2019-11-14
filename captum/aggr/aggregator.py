@@ -1,56 +1,73 @@
 # TODO: convert to iterable to be a cleaner api
 # i.e. to be able to go for stat in stat_graph: ...
 class StatGraph(object):
+    class Node(object):
+        stat = None
+        invisible = False
+
+        def __init__(self, stat, invisible):
+            self.stat = stat
+            self.invisible = invisible
+
     def __init__(self):
-        self.is_ready = False
         self.module_to_node = dict()
         self.nodes = []
 
     # TODO: type annotation
     def add(self, stat):
-        if stat.__class__ in self.module_to_node:
+        if stat in self.module_to_node:
             return self
 
-        self.is_ready = False
-        self.module_to_node[stat.__class__] = stat
-        self.nodes.append(stat)
+        node = StatGraph.Node(stat=stat(), invisible=False)
+        self.nodes.append(node)
+        self.module_to_node[stat] = node
         return self
 
-    def construct(self):
-        self._resolve_deps()
-        # TODO: 
-        # we're currently assuming this is already topologically sorted, which is a fair assumption
-        #self.nodes = list(self._topo_sort())
-        self.is_ready = True
+    def iter_all(self, visible=True):
+        for node in self.nodes:
+            if visible and node.invisible:
+                continue
+
+            yield node.stat
+
+    def contains(self, stat_module):
+        return stat_module in self.module_to_node
 
     def _resolve_deps(self):
-        pass
-#        for node in self.nodes:
-#            self.deps[node] = {}
-#            for name, dep in node.stat.deps.items():
-#                assert dep in self.module_to_node
-#                self.deps[node][name] = self.module_to_node[dep.__class__]
-
-    def iter_all(self):
-        if not self.is_ready:
-            self.construct()
-
-        for stat in self.nodes:
-            yield stat
-
-    @property
-    def summary(self):
-        summ = {}
         for stat in self.iter_all():
+            for name, dep in stat.deps:
+                if self.contains(dep):
+                    continue
+                # TODO: add to beginning of list
+                # TODO: handle this better
+
+            continue
+
+    def traverse(self, x=None):
+        # TODO
+        summ = {}
+        for stat in self.iter_all(visible=False):
             deps = {}
 
             for name, module in stat.deps.items():
                 assert module in summ
                 deps[name] = summ[module]
 
+            if x is not None:
+                stat.update(x, deps)
+
             summ[stat.__class__] = stat.get(deps)
 
-        return { self.module_to_node[k].name: v for k, v in summ.items() }
+        return summ
+
+    @property
+    def summary(self):
+        #self._resolve_deps()
+        summ = self.traverse()
+
+        return { self.module_to_node[k].stat.name: v for k, v in summ.items() }
+        # TODO
+        #return { self.module_to_node[k].name: v for k, v in summ.items() if not v.invisible }
 
 # TODO:
 # should we let update accept a dict to be more generic?
@@ -70,8 +87,7 @@ class Aggregator(object):
         return self
 
     def update(self, x):
-        for stat in self._stat_graph.iter_all():
-            stat.update(x)
+        self._stat_graph.traverse(x)
 
     @property
     def summary(self):
