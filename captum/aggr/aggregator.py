@@ -1,5 +1,3 @@
-# TODO: convert to iterable to be a cleaner api
-# i.e. to be able to go for stat in stat_graph: ...
 class StatGraph(object):
     class Node(object):
         stat = None
@@ -10,15 +8,16 @@ class StatGraph(object):
             self.invisible = invisible
 
     def __init__(self):
+        self.is_ready = False
         self.module_to_node = dict()
         self.nodes = []
 
-    # TODO: type annotation
-    def add(self, stat):
+    def add(self, stat, invisible=False):
         if stat in self.module_to_node:
             return self
 
-        node = StatGraph.Node(stat=stat(), invisible=False)
+        self.is_ready = False
+        node = StatGraph.Node(stat=stat(), invisible=invisible)
         self.nodes.append(node)
         self.module_to_node[stat] = node
         return self
@@ -34,17 +33,49 @@ class StatGraph(object):
         return stat_module in self.module_to_node
 
     def _resolve_deps(self):
-        for stat in self.iter_all():
-            for name, dep in stat.deps:
-                if self.contains(dep):
-                    continue
-                # TODO: add to beginning of list
-                # TODO: handle this better
+        unsat = False
+        for stat in self.iter_all(visible=False):
+            for name, dep in stat.deps.items():
+                if not self.contains(dep):
+                    self.add(dep, invisible=True)
+                    unsat = True
+        
+        if unsat:
+            self._resolve_deps()
+        else:
+            self.nodes = list(self._topo_order())
+            self.is_ready = True
 
-            continue
+    # TODO: add tests
+    def _dfs(self, node, visited):
+        for name, module in node.stat.deps.items():
+            parent = self.module_to_node[module]
+            if parent in visited:
+                continue
+
+            for x in self._dfs(parent, visited):
+                yield x
+        
+        visited.add(node)
+        yield node
+
+    # TODO: add tests
+    def _topo_order(self):
+        visited = set()
+        order = []
+        for node in self.nodes:
+            if node in visited:
+                continue
+
+            for node in self._dfs(node, visited):
+                order.append(node)
+
+        return order
 
     def traverse(self, x=None):
-        # TODO
+        if not self.is_ready:
+            self._resolve_deps()
+
         summ = {}
         for stat in self.iter_all(visible=False):
             deps = {}
@@ -62,16 +93,11 @@ class StatGraph(object):
 
     @property
     def summary(self):
-        #self._resolve_deps()
         summ = self.traverse()
 
-        return { self.module_to_node[k].stat.name: v for k, v in summ.items() }
-        # TODO
-        #return { self.module_to_node[k].name: v for k, v in summ.items() if not v.invisible }
+        return { self.module_to_node[k].stat.name: v for k, v in summ.items() \
+                 if not self.module_to_node[k].invisible }
 
-# TODO:
-# should we let update accept a dict to be more generic?
-# or just let the user handle that on the user-side?
 class Aggregator(object):
     def __init__(self, stats=None):
         self._stat_graph = StatGraph()
@@ -93,8 +119,6 @@ class Aggregator(object):
     def summary(self):
         return self._stat_graph.summary
 
-# TODO
-def common_aggr(init_fn=None, min_fn=None, max_fn=None):
-    return None
-    #from captum.aggr.stat import Mean, Var, StdDev, Min, Max
-    #return Aggregator([Mean(init_fn=init_fn), Var(init_fn=init_fn), StdDev(), Count(), Min(), Max()])
+def common_aggr():
+    from captum.aggr.stat import Mean, Var, StdDev, SampleStdDev, Min, Max
+    return Aggregator([Mean, Var, StdDev, SampleStdDev, Min, Max])
