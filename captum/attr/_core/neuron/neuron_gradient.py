@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+from torch.nn import Module
+from typing import Callable, List, Optional, Tuple, Union, Any
+
 from ..._utils.attribution import NeuronAttribution, GradientAttribution
 from ..._utils.common import (
     _format_input,
@@ -10,10 +13,16 @@ from ..._utils.gradient import (
     undo_gradient_requirements,
     _forward_layer_eval_with_neuron_grads,
 )
+from ..._utils.typing import TensorOrTupleOfTensors
 
 
 class NeuronGradient(NeuronAttribution, GradientAttribution):
-    def __init__(self, forward_func, layer, device_ids=None):
+    def __init__(
+        self,
+        forward_func: Callable,
+        layer: Module,
+        device_ids: Optional[List[int]] = None,
+    ) -> None:
         r"""
         Args:
 
@@ -39,11 +48,11 @@ class NeuronGradient(NeuronAttribution, GradientAttribution):
 
     def attribute(
         self,
-        inputs,
-        neuron_index,
-        additional_forward_args=None,
-        attribute_to_neuron_input=False,
-    ):
+        inputs: TensorOrTupleOfTensors,
+        neuron_index: Union[int, Tuple[int, ...]],
+        additional_forward_args: Any = None,
+        attribute_to_neuron_input: bool = False,
+    ) -> TensorOrTupleOfTensors:
         r"""
             Computes the gradient of the output of a particular neuron with
             respect to the inputs of the network.
@@ -65,7 +74,7 @@ class NeuronGradient(NeuronAttribution, GradientAttribution):
                               dimension 0 corresponds to number of examples).
                               An integer may be provided instead of a tuple of
                               length 1.
-                additional_forward_args (tuple, optional): If the forward function
+                additional_forward_args (any, optional): If the forward function
                             requires additional arguments other than the inputs for
                             which attributions should not be computed, this argument
                             can be provided. It must be either a single additional
@@ -125,7 +134,7 @@ class NeuronGradient(NeuronAttribution, GradientAttribution):
         )
         gradient_mask = apply_gradient_requirements(inputs)
 
-        _, input_grads = _forward_layer_eval_with_neuron_grads(
+        _, input_grads, _ = _forward_layer_eval_with_neuron_grads(
             self.forward_func,
             inputs,
             self.layer,

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 import os
 
-from captum.insights import AttributionVisualizer, Batch
-from captum.insights.features import ImageFeature
-
 import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
+
+from captum.insights import AttributionVisualizer, Batch
+from captum.insights.features import ImageFeature
 
 
 def get_classes():
@@ -92,4 +92,4 @@ if __name__ == "__main__":
         dataset=formatted_data_iter(),
     )
 
-    visualizer.serve()
+    visualizer.serve(debug=True)

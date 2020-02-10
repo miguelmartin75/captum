@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
 import torch
+from torch import Tensor
+from torch.nn import Module
+
+import typing
+from typing import Callable, List, Optional, Tuple, Union, Any
 
 import numpy as np
 
@@ -9,15 +14,22 @@ from ..._utils.gradient import compute_layer_gradients_and_eval, _forward_layer_
 
 from ..gradient_shap import GradientShap, InputBaselineXGradient
 from ..._utils.common import (
+    _format_input_baseline,
     _format_callable_baseline,
     _compute_conv_delta_and_format_attrs,
 )
+from ..._utils.typing import TensorOrTupleOfTensors
 
 from ..noise_tunnel import NoiseTunnel
 
 
 class LayerGradientShap(LayerAttribution, GradientShap):
-    def __init__(self, forward_func, layer, device_ids=None):
+    def __init__(
+        self,
+        forward_func: Callable,
+        layer: Module,
+        device_ids: Optional[List[int]] = None,
+    ) -> None:
         r"""
         Args:
 
@@ -29,9 +41,6 @@ class LayerGradientShap(LayerAttribution, GradientShap):
                           the inputs or outputs of the layer, corresponding to
                           attribution of each neuron in the input or output of
                           this layer.
-                          Currently, it is assumed that the inputs or the outputs
-                          of the layer, depending on which one is used for
-                          attribution can only be a single tensor.
             device_ids (list(int)): Device ID list, necessary only if forward_func
                           applies a DataParallel model. This allows reconstruction of
                           intermediate outputs from batched results across devices.
@@ -40,6 +49,37 @@ class LayerGradientShap(LayerAttribution, GradientShap):
         """
         LayerAttribution.__init__(self, forward_func, layer, device_ids)
         GradientShap.__init__(self, forward_func)
+
+    @typing.overload
+    def attribute(
+        self,
+        inputs: TensorOrTupleOfTensors,
+        baselines: TensorOrTupleOfTensors,
+        n_samples: int = 5,
+        stdevs: Optional[Union[float, Tuple[float, ...]]] = 0.0,
+        target: Optional[
+            Union[int, Tuple[int, ...], Tensor, List[Tuple[int, ...]]]
+        ] = None,
+        additional_forward_args: Any = None,
+        attribute_to_layer_input: bool = False,
+    ) -> TensorOrTupleOfTensors:
+        ...
+
+    @typing.overload
+    def attribute(
+        self,
+        inputs: TensorOrTupleOfTensors,
+        baselines: Union[TensorOrTupleOfTensors, Callable],
+        n_samples: int = 5,
+        stdevs: Optional[Union[float, Tuple[float, ...]]] = 0.0,
+        target: Optional[
+            Union[int, Tuple[int, ...], Tensor, List[Tuple[int, ...]]]
+        ] = None,
+        additional_forward_args: Any = None,
+        return_convergence_delta: bool = False,
+        attribute_to_layer_input: bool = False,
+    ) -> Union[TensorOrTupleOfTensors, Tuple[TensorOrTupleOfTensors, Tensor]]:
+        ...
 
     def attribute(
         self,
@@ -98,40 +138,29 @@ class LayerGradientShap(LayerAttribution, GradientShap):
                         that for all given input tensors, dimension 0 corresponds
                         to the number of examples, and if multiple input tensors
                         are provided, the examples must be aligned appropriately.
-            baselines (scalar, tensor, tuple of scalars or tensors, callable, optional):
+            baselines (tensor, tuple of tensors, callable):
                         Baselines define the starting point from which expectation
                         is computed and can be provided as:
 
                         - a single tensor, if inputs is a single tensor, with
-                            exactly the same dimensions as inputs or the first
-                            dimension is one and the remaining dimensions match
-                            with inputs.
+                            the first dimension equal to the number of examples
+                            in the baselines' distribution. The remaining dimensions
+                            must match with input tensor's dimension starting from
+                            the second dimension.
 
-                        - a single scalar, if inputs is a single tensor, which will
-                            be broadcasted for each input value in input tensor.
-
-                        - a tuple of tensors or scalars, the baseline corresponding
-                            to each tensor in the inputs' tuple can be:
-                            - either a tensor with matching dimensions to
-                                corresponding tensor in the inputs' tuple
-                                or the first dimension is one and the remaining
-                                dimensions match with the corresponding
-                                input tensor.
-                            - or a scalar, corresponding to a tensor in the
-                                inputs' tuple. This scalar value is broadcasted
-                                for corresponding input tensor.
+                        - a tuple of tensors, if inputs is a tuple of tensors,
+                            with the first dimension of any tensor inside the tuple
+                            equal to the number of examples in the baseline's
+                            distribution. The remaining dimensions must match
+                            the dimensions of the corresponding input tensor
+                            starting from the second dimension.
 
                         - callable function, optionally takes `inputs` as an
-                            argument and either returns a single tensor, scalar
+                            argument and either returns a single tensor
                             or a tuple of those.
 
                         It is recommended that the number of samples in the baselines'
                         tensors is larger than one.
-
-                        In the cases when `baselines` is not provided, we internally
-                        use zero scalar corresponding to each input tensor.
-
-                        Default: None
             n_samples (int, optional):  The number of randomly generated examples
                         per sample in the input batch. Random examples are
                         generated by adding gaussian random noise to each sample.
@@ -170,7 +199,7 @@ class LayerGradientShap(LayerAttribution, GradientShap):
                             target for the corresponding example.
 
                         Default: None
-            additional_forward_args (tuple, optional): If the forward function
+            additional_forward_args (any, optional): If the forward function
                         requires additional arguments other than the inputs for
                         which attributions should not be computed, this argument
                         can be provided. It can contain a tuple of ND tensors or
@@ -200,14 +229,17 @@ class LayerGradientShap(LayerAttribution, GradientShap):
                         Default: False
         Returns:
             **attributions** or 2-element tuple of **attributions**, **delta**:
-            - **attributions** (*tensor*):
+            - **attributions** (*tensor* or tuple of *tensors*):
                         Attribution score computed based on GradientSHAP with
                         respect to layer's input or output. Attributions will always
                         be the same size as the provided layer's inputs or outputs,
                         depending on whether we attribute to the inputs or outputs
-                        of the layer. Since currently it is assumed that the inputs
-                        and outputs of the layer must be single tensor, returned
-                        attributions have the shape of that tensor.
+                        of the layer.
+                        Attributions are returned in a tuple based on whether
+                        the layer inputs / outputs are contained in a tuple
+                        from a forward hook. For standard modules, inputs of
+                        a single tensor are usually wrapped in a tuple, while
+                        outputs of a single tensor are not.
             - **delta** (*tensor*, returned if return_convergence_delta=True):
                         This is computed using the property that the total
                         sum of forward_func(inputs) - forward_func(baselines)
@@ -236,15 +268,19 @@ class LayerGradientShap(LayerAttribution, GradientShap):
                                                             target=5)
 
         """
+        # since `baselines` is a distribution, we can generate it using a function
+        # rather than passing it as an input argument
+        baselines = _format_callable_baseline(baselines, inputs)
+        assert isinstance(baselines[0], torch.Tensor), (
+            "Baselines distribution has to be provided in a form "
+            "of a torch.Tensor {}.".format(baselines[0])
+        )
+
         input_min_baseline_x_grad = LayerInputBaselineXGradient(
             self.forward_func, self.layer, device_ids=self.device_ids
         )
 
         nt = NoiseTunnel(input_min_baseline_x_grad)
-
-        # since `baselines` is a distribution, we can generate it using a function
-        # rather than passing it as an input argument
-        baselines = _format_callable_baseline(baselines, inputs)
 
         attributions = nt.attribute(
             inputs,
@@ -263,7 +299,12 @@ class LayerGradientShap(LayerAttribution, GradientShap):
 
 
 class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
-    def __init__(self, forward_func, layer, device_ids=None):
+    def __init__(
+        self,
+        forward_func: Callable,
+        layer: Module,
+        device_ids: Optional[List[int]] = None,
+    ):
         r"""
         Args:
 
@@ -275,9 +316,6 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
                           the inputs or outputs of the layer, corresponding to
                           attribution of each neuron in the input or output of
                           this layer.
-                          Currently, it is assumed that the inputs or the outputs
-                          of the layer, depending on which one is used for
-                          attribution can only be a single tensor.
             device_ids (list(int)): Device ID list, necessary only if forward_func
                           applies a DataParallel model. This allows reconstruction of
                           intermediate outputs from batched results across devices.
@@ -286,6 +324,37 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
         """
         LayerAttribution.__init__(self, forward_func, layer, device_ids)
         InputBaselineXGradient.__init__(self, forward_func)
+
+    @typing.overload
+    def attribute(
+        self,
+        inputs: TensorOrTupleOfTensors,
+        baselines: Optional[
+            Union[Tensor, int, float, Tuple[Union[Tensor, int, float], ...]]
+        ] = None,
+        target: Optional[
+            Union[int, Tuple[int, ...], Tensor, List[Tuple[int, ...]]]
+        ] = None,
+        additional_forward_args: Any = None,
+        attribute_to_layer_input: bool = False,
+    ) -> TensorOrTupleOfTensors:
+        ...
+
+    @typing.overload
+    def attribute(
+        self,
+        inputs: TensorOrTupleOfTensors,
+        baselines: Optional[
+            Union[Tensor, int, float, Tuple[Union[Tensor, int, float], ...]]
+        ] = None,
+        target: Optional[
+            Union[int, Tuple[int, ...], Tensor, List[Tuple[int, ...]]]
+        ] = None,
+        additional_forward_args: Any = None,
+        return_convergence_delta: bool = False,
+        attribute_to_layer_input: bool = False,
+    ) -> Union[TensorOrTupleOfTensors, Tuple[TensorOrTupleOfTensors, Tensor]]:
+        ...
 
     def attribute(
         self,
@@ -296,6 +365,7 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
         return_convergence_delta=False,
         attribute_to_layer_input=False,
     ):
+        inputs, baselines = _format_input_baseline(inputs, baselines)
         rand_coefficient = torch.tensor(
             np.random.uniform(0.0, 1.0, inputs[0].shape[0]),
             device=inputs[0].device,
@@ -306,7 +376,7 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
             self._scale_input(input, baseline, rand_coefficient)
             for input, baseline in zip(inputs, baselines)
         )
-        grads, _ = compute_layer_gradients_and_eval(
+        grads, _, is_layer_tuple = compute_layer_gradients_and_eval(
             self.forward_func,
             self.layer,
             input_baseline_scaled,
@@ -316,7 +386,7 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
             attribute_to_layer_input=attribute_to_layer_input,
         )
 
-        attr_baselines = _forward_layer_eval(
+        attr_baselines, _ = _forward_layer_eval(
             self.forward_func,
             baselines,
             self.layer,
@@ -325,7 +395,7 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
             attribute_to_layer_input=attribute_to_layer_input,
         )
 
-        attr_inputs = _forward_layer_eval(
+        attr_inputs, _ = _forward_layer_eval(
             self.forward_func,
             inputs,
             self.layer,
@@ -333,10 +403,6 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
             device_ids=self.device_ids,
             attribute_to_layer_input=attribute_to_layer_input,
         )
-        attr_inputs = (attr_inputs,)
-        attr_baselines = (attr_baselines,)
-        grads = (grads,)
-
         input_baseline_diffs = tuple(
             input - baseline for input, baseline in zip(attr_inputs, attr_baselines)
         )
@@ -352,4 +418,5 @@ class LayerInputBaselineXGradient(LayerAttribution, InputBaselineXGradient):
             inputs,
             additional_forward_args,
             target,
+            is_layer_tuple,
         )

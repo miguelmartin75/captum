@@ -29,7 +29,7 @@ fi
 
 if [[ $PYTORCH_NIGHTLY == true ]]; then
   # install CPU version for much smaller download
-  conda install -y -c pytorch pytorch-nightly-cpu
+  conda install -y pytorch cpuonly -c pytorch-nightly
 else
  # install CPU version for much smaller download
  conda install -y -c pytorch pytorch-cpu
@@ -37,7 +37,7 @@ fi
 
 # install other deps
 conda install -y numpy sphinx pytest flake8 ipywidgets ipython
-conda install -y -c conda-forge black matplotlib pytest-cov sphinx-autodoc-typehints
+conda install -y -c conda-forge black matplotlib pytest-cov sphinx-autodoc-typehints mypy flask
 
 # build insights and install captum
 # TODO: remove CI=false when we want React warnings treated as errors

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
+from typing import Callable, List, Optional, Tuple, Union, Any
+
 import torch
+from torch import Tensor
+from torch.nn import Module
+
 from ..._utils.approximation_methods import approximation_parameters
 from ..._utils.attribution import LayerAttribution, GradientAttribution
 from ..._utils.batching import _batched_operator
@@ -8,6 +13,7 @@ from ..._utils.common import (
     _format_input_baseline,
     _validate_input,
     _format_additional_forward_args,
+    _format_attributions,
     _expand_additional_forward_args,
     _expand_target,
 )
@@ -15,7 +21,12 @@ from ..._utils.gradient import compute_layer_gradients_and_eval
 
 
 class InternalInfluence(LayerAttribution, GradientAttribution):
-    def __init__(self, forward_func, layer, device_ids=None):
+    def __init__(
+        self,
+        forward_func: Callable,
+        layer: Module,
+        device_ids: Optional[List[int]] = None,
+    ) -> None:
         r"""
         Args:
 
@@ -27,9 +38,6 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
                           the inputs or outputs of the layer, corresponding to
                           attribution of each neuron in the input or output of
                           this layer.
-                          Currently, it is assumed that the inputs or the outputs
-                          of the layer, depending on which one is used for
-                          attribution can only be a single tensor.
             device_ids (list(int)): Device ID list, necessary only if forward_func
                           applies a DataParallel model. This allows reconstruction of
                           intermediate outputs from batched results across devices.
@@ -41,15 +49,19 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
 
     def attribute(
         self,
-        inputs,
-        baselines=None,
-        target=None,
-        additional_forward_args=None,
-        n_steps=50,
-        method="gausslegendre",
-        internal_batch_size=None,
-        attribute_to_layer_input=False,
-    ):
+        inputs: Union[Tensor, Tuple[Tensor, ...]],
+        baselines: Optional[
+            Union[Tensor, int, float, Tuple[Union[Tensor, int, float], ...]]
+        ] = None,
+        target: Optional[
+            Union[int, Tuple[int, ...], Tensor, List[Tuple[int, ...]]]
+        ] = None,
+        additional_forward_args: Any = None,
+        n_steps: int = 50,
+        method: str = "gausslegendre",
+        internal_batch_size: Optional[int] = None,
+        attribute_to_layer_input: bool = False,
+    ) -> Union[Tensor, Tuple[Tensor, ...]]:
         r"""
             Computes internal influence by approximating the integral of gradients
             for a particular layer along the path from a baseline input to the
@@ -124,7 +136,7 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
                                 target for the corresponding example.
 
                             Default: None
-                additional_forward_args (tuple, optional): If the forward function
+                additional_forward_args (any, optional): If the forward function
                             requires additional arguments other than the inputs for
                             which attributions should not be computed, this argument
                             can be provided. It must be either a single additional
@@ -170,13 +182,18 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
                             Default: False
 
             Returns:
-                *tensor* of **attributions**:
-                - **attributions** (*tensor*):
+                *tensor* or tuple of *tensors* of **attributions**:
+                - **attributions** (*tensor* or tuple of *tensors*):
                             Internal influence of each neuron in given
                             layer output. Attributions will always be the same size
                             as the output or input of the given layer depending on
                             whether `attribute_to_layer_input` is set to `False` or
                             `True`respectively.
+                            Attributions are returned in a tuple based on whether
+                            the layer inputs / outputs are contained in a tuple
+                            from a forward hook. For standard modules, inputs of
+                            a single tensor are usually wrapped in a tuple, while
+                            outputs of a single tensor are not.
 
             Examples::
 
@@ -222,7 +239,7 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
         expanded_target = _expand_target(target, n_steps)
 
         # Returns gradient of output with respect to hidden layer.
-        layer_gradients, _ = _batched_operator(
+        layer_gradients, _, is_layer_tuple = _batched_operator(
             compute_layer_gradients_and_eval,
             scaled_features_tpl,
             input_additional_args,
@@ -235,11 +252,17 @@ class InternalInfluence(LayerAttribution, GradientAttribution):
         )
         # flattening grads so that we can multiply it with step-size
         # calling contiguous to avoid `memory whole` problems
-        scaled_grads = layer_gradients.contiguous().view(n_steps, -1) * torch.tensor(
-            step_sizes
-        ).view(n_steps, 1).to(layer_gradients.device)
+        scaled_grads = tuple(
+            layer_grad.contiguous().view(n_steps, -1)
+            * torch.tensor(step_sizes).view(n_steps, 1).to(layer_grad.device)
+            for layer_grad in layer_gradients
+        )
 
         # aggregates across all steps for each tensor in the input tuple
-        return _reshape_and_sum(
-            scaled_grads, n_steps, inputs[0].shape[0], layer_gradients.shape[1:]
+        attrs = tuple(
+            _reshape_and_sum(
+                scaled_grad, n_steps, inputs[0].shape[0], layer_grad.shape[1:]
+            )
+            for scaled_grad, layer_grad in zip(scaled_grads, layer_gradients)
         )
+        return _format_attributions(is_layer_tuple, attrs)

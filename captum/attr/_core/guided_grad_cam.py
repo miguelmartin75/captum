@@ -7,9 +7,16 @@ from .._utils.common import _format_input, _format_attributions
 from .layer.grad_cam import LayerGradCam
 from .guided_backprop_deconvnet import GuidedBackprop
 
+from torch.nn import Module
+from torch import Tensor
+from typing import Optional, List, Tuple, Any, Union
+from .._utils.typing import TensorOrTupleOfTensors
+
 
 class GuidedGradCam(GradientAttribution):
-    def __init__(self, model, layer, device_ids=None):
+    def __init__(
+        self, model: Module, layer: Module, device_ids: Optional[List[int]] = None
+    ) -> None:
         r"""
         Args
 
@@ -29,12 +36,14 @@ class GuidedGradCam(GradientAttribution):
 
     def attribute(
         self,
-        inputs,
-        target=None,
-        additional_forward_args=None,
-        interpolate_mode="nearest",
-        attribute_to_layer_input=False,
-    ):
+        inputs: TensorOrTupleOfTensors,
+        target: Optional[
+            Union[int, Tuple[int, ...], Tensor, List[Tuple[int, ...]]]
+        ] = None,
+        additional_forward_args: Any = None,
+        interpolate_mode: str = "nearest",
+        attribute_to_layer_input: bool = False,
+    ) -> TensorOrTupleOfTensors:
         r"""
             Computes element-wise product of guided backpropagation attributions
             with upsampled (non-negative) GradCAM attributions.
@@ -100,7 +109,7 @@ class GuidedGradCam(GradientAttribution):
                                 target for the corresponding example.
 
                             Default: None
-                additional_forward_args (tuple, optional): If the forward function
+                additional_forward_args (any, optional): If the forward function
                             requires additional arguments other than the inputs for
                             which attributions should not be computed, this argument
                             can be provided. It must be either a single additional
@@ -177,6 +186,12 @@ class GuidedGradCam(GradientAttribution):
             attribute_to_layer_input=attribute_to_layer_input,
             relu_attributions=True,
         )
+        if isinstance(grad_cam_attr, tuple):
+            assert len(grad_cam_attr) == 1, (
+                "GuidedGradCAM attributions for layer with multiple inputs / "
+                "outputs is not supported."
+            )
+            grad_cam_attr = grad_cam_attr[0]
         guided_backprop_attr = self.guided_backprop.attribute(
             inputs=inputs,
             target=target,
@@ -193,7 +208,7 @@ class GuidedGradCam(GradientAttribution):
                         interpolate_mode=interpolate_mode,
                     )
                 )
-            except (RuntimeError, NotImplementedError):
+            except RuntimeError:
                 warnings.warn(
                     "Couldn't appropriately interpolate GradCAM attributions for "
                     "some input tensors, returning None for corresponding attributions."

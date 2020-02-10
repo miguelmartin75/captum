@@ -109,8 +109,23 @@ class ReLUDeepLiftModel(nn.Module):
         self.relu1 = nn.ReLU()
         self.relu2 = nn.ReLU()
 
-    def forward(self, x1, x2):
-        return 2 * self.relu1(x1) + 2 * self.relu2(x2 - 1.5)
+    def forward(self, x1, x2, x3=2):
+        return 2 * self.relu1(x1) + x3 * self.relu2(x2 - 1.5)
+
+
+class LinearMaxPoolLinearModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # kernel size -> 4
+        self.lin1 = nn.Linear(4, 4, bias=False)
+        self.lin1.weight = nn.Parameter(torch.eye(4, 4))
+        self.pool1 = nn.MaxPool1d(4)
+        self.lin2 = nn.Linear(1, 1, bias=False)
+        self.lin2.weight = nn.Parameter(torch.ones(1, 1))
+
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        return self.lin2(self.pool1(self.lin1(x))[:, 0, :])
 
 
 class BasicModelWithReusableModules(nn.Module):
@@ -122,6 +137,19 @@ class BasicModelWithReusableModules(nn.Module):
 
     def forward(self, inputs):
         return self.relu(self.lin2(self.relu(self.lin1(inputs))))
+
+
+class BasicModelWithSparseInputs(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin1 = nn.Linear(3, 1)
+        self.lin1.weight = nn.Parameter(torch.tensor([[3.0, 1.0, 2.0]]))
+        self.lin1.bias = nn.Parameter(torch.zeros(1))
+
+    def forward(self, inputs, sparse_list):
+        return (
+            self.lin1(inputs) + (sparse_list[0] if torch.numel(sparse_list) > 0 else 0)
+        ).sum()
 
 
 class TanhDeepLiftModel(nn.Module):
@@ -155,8 +183,8 @@ class ReLULinearDeepLiftModel(nn.Module):
         self.l3 = nn.Linear(2, 1, bias=False)
         self.l3.weight = nn.Parameter(torch.tensor([[1.0, 1.0]]))
 
-    def forward(self, x1, x2):
-        return self.l3(self.relu(torch.cat([self.l1(x1), self.l2(x2)], axis=1)))
+    def forward(self, x1, x2, x3=1):
+        return self.l3(self.relu(torch.cat([self.l1(x1), x3 * self.l2(x2)], axis=1)))
 
 
 class Conv1dDeepLiftModel(nn.Module):
@@ -181,7 +209,8 @@ class TextModule(nn.Module):
         if self.second_embedding:
             self.inner_embedding2 = nn.Embedding(num_embeddings, embedding_dim)
 
-    def forward(self, input, another_input=None):
+    def forward(self, input=None, another_input=None):
+        assert input is not None, "The inputs to embedding module must be specified"
         embedding = self.inner_embedding(input)
         if self.second_embedding:
             another_embedding = self.inner_embedding2(
@@ -219,28 +248,47 @@ class BasicEmbeddingModel(nn.Module):
         self.embedding2 = TextModule(
             num_embeddings, embedding_dim, nested_second_embedding
         )
-        self.linear1 = nn.Linear(embedding_dim, hidden_dim)
+        self.linear1 = nn.Linear(embedding_dim, hidden_dim, bias=False)
+        self.linear1.weight = nn.Parameter(torch.ones(hidden_dim, embedding_dim))
         self.relu = nn.ReLU()
         self.linear2 = nn.Linear(hidden_dim, output_dim)
+        self.linear2.weight = nn.Parameter(torch.ones(output_dim, hidden_dim))
 
-    def forward(self, input, another_input=None):
-        embedding1 = self.embedding1(input)
-        embedding2 = self.embedding2(input, another_input)
+    def forward(self, input1, input2, input3=None):
+        embedding1 = self.embedding1(input1)
+        embedding2 = self.embedding2(input2, input3)
         embeddings = embedding1 + embedding2
-        return self.linear2(self.relu(self.linear1(embeddings))).squeeze()
+        return self.linear2(self.relu(self.linear1(embeddings))).sum(1)
+
+
+class MultiRelu(nn.Module):
+    def __init__(self, inplace=False):
+        super().__init__()
+        self.relu1 = nn.ReLU(inplace=inplace)
+        self.relu2 = nn.ReLU(inplace=inplace)
+
+    def forward(self, arg1, arg2):
+        return (self.relu1(arg1), self.relu2(arg2))
 
 
 class BasicModel_MultiLayer(nn.Module):
-    def __init__(self, inplace=False):
+    def __init__(self, inplace=False, multi_input_module=False):
         super().__init__()
         # Linear 0 is simply identity transform
+        self.multi_input_module = multi_input_module
         self.linear0 = nn.Linear(3, 3)
         self.linear0.weight = nn.Parameter(torch.eye(3))
         self.linear0.bias = nn.Parameter(torch.zeros(3))
         self.linear1 = nn.Linear(3, 4)
         self.linear1.weight = nn.Parameter(torch.ones(4, 3))
         self.linear1.bias = nn.Parameter(torch.tensor([-10.0, 1.0, 1.0, 1.0]))
-        self.relu = nn.ReLU(inplace=inplace)
+        if multi_input_module:
+            self.linear1_alt = nn.Linear(3, 4)
+            self.linear1_alt.weight = nn.Parameter(torch.ones(4, 3))
+            self.linear1_alt.bias = nn.Parameter(torch.tensor([-10.0, 1.0, 1.0, 1.0]))
+            self.relu = MultiRelu(inplace=inplace)
+        else:
+            self.relu = nn.ReLU(inplace=inplace)
         self.linear2 = nn.Linear(4, 2)
         self.linear2.weight = nn.Parameter(torch.ones(2, 4))
         self.linear2.bias = nn.Parameter(torch.tensor([-1.0, 1.0]))
@@ -249,7 +297,11 @@ class BasicModel_MultiLayer(nn.Module):
         input = x if add_input is None else x + add_input
         lin0_out = self.linear0(input)
         lin1_out = self.linear1(lin0_out)
-        relu_out = self.relu(lin1_out)
+        if self.multi_input_module:
+            relu_out1, relu_out2 = self.relu(lin1_out, self.linear1_alt(input))
+            relu_out = relu_out1 + relu_out2
+        else:
+            relu_out = self.relu(lin1_out)
         lin2_out = self.linear2(relu_out)
         if multidim_output:
             stack_mid = torch.stack((lin2_out, 2 * lin2_out), dim=2)
@@ -278,6 +330,7 @@ class BasicModel_ConvNet_One_Conv(nn.Module):
         self.fc1.weight = nn.Parameter(
             torch.cat([torch.ones(4, 5), -1 * torch.ones(4, 3)], dim=1)
         )
+        self.fc1.bias = nn.Parameter(torch.zeros(4))
         self.relu2 = nn.ReLU(inplace=inplace)
 
     def forward(self, x, x2=None):
